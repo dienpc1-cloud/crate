@@ -651,7 +651,8 @@ a.length>D&&(D=a.length,p=0|1.25*D+7200,r=new Int8Array(p));a=u.lame_encode_buff
     search: S('<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>'),
     check: S('<path d="M5 12l5 5 9-10"/>'),
     rec: F('<circle cx="12" cy="12" r="7"/>'),
-    stop: F('<rect x="6.5" y="6.5" width="11" height="11" rx="2"/>')
+    stop: F('<rect x="6.5" y="6.5" width="11" height="11" rx="2"/>'),
+    download: S('<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/>')
   };
 
   /* ---------- State ---------- */
@@ -817,7 +818,25 @@ a.length>D&&(D=a.length,p=0|1.25*D+7200,r=new Int8Array(p));a=u.lame_encode_buff
     }
     if (pl && pl.trackIds.indexOf(t.id) < 0) { pl.trackIds.push(t.id); savePl(pl); }
     btn.classList.add("on"); btn.disabled = true; btn.innerHTML = ICON.check; btn.setAttribute("aria-label", "Added: " + r.title);
-    render(); toast("Added “" + r.title + "”.");
+    render();
+
+    // Immediately start recording this track as MP3 so it lands in the library as a real file
+    var list = viewIds();
+    var idx = list.indexOf(t.id);
+    if (idx < 0) {
+      list = tracks.map(function (x) { return x.id; });
+      idx = list.indexOf(t.id);
+    }
+    if (idx >= 0) {
+      state.queue = list.slice();
+      state.qi = idx;
+      state.hist = [];
+      load(true);
+      startRec();
+      toast("Recording “" + r.title + "”. Allow tab audio sharing — when you stop, the MP3 is saved to your library.");
+    } else {
+      toast("Added “" + r.title + "”.");
+    }
   }
 
   /* ---------- Adding YouTube links ---------- */
@@ -955,6 +974,7 @@ a.length>D&&(D=a.length,p=0|1.25*D+7200,r=new Int8Array(p));a=u.lame_encode_buff
         '<div class="meta"><div class="ttl">' + esc(t.title) + '</div><div class="sub">' + esc(artistOf(t)) + (t.kind === "youtube" ? ' <span class="tag">YouTube</span>' : "") + "</div></div>" +
         '<span class="dur">' + (t.duration ? fmt(t.duration) : "") + "</span>" +
         (reorderOn ? '<div class="acts"><button class="iconbtn" data-act="up" aria-label="Move up" title="Move up">' + ICON.up + '</button><button class="iconbtn" data-act="down" aria-label="Move down" title="Move down">' + ICON.down + '</button></div></div>' : '<div class="acts"><button class="iconbtn" data-act="addto" aria-label="Add ' + esc(t.title) + ' to a playlist" title="Add to playlist">' + ICON.plus + "</button>" +
+        '<button class="iconbtn" data-act="download" aria-label="' + (t.kind === "youtube" ? "Record and download as MP3" : "Download") + ' ' + esc(t.title) + '" title="' + (t.kind === "youtube" ? "Record & download MP3" : "Download") + '">' + ICON.download + "</button>" +
         (inPl ? '<button class="iconbtn" data-act="rmpl" aria-label="Remove from playlist" title="Remove from playlist">' + ICON.minus + "</button>"
               : '<button class="iconbtn" data-act="deltrack" aria-label="Delete from library" title="Delete from library">' + ICON.trash + "</button>") +
         "</div></div>");
@@ -1251,6 +1271,38 @@ a.length>D&&(D=a.length,p=0|1.25*D+7200,r=new Int8Array(p));a=u.lame_encode_buff
     else if (curId) { state.queue = state.queue.filter(function (x) { return x !== id; }); state.qi = state.queue.indexOf(curId); }
     render();
   }
+  function downloadTrack(id) {
+    var t = byId(id);
+    if (!t) return;
+    if (t.kind === "youtube") {
+      var list = viewIds();
+      var idx = list.indexOf(id);
+      if (idx < 0) {
+        list = tracks.map(function (x) { return x.id; });
+        idx = list.indexOf(id);
+      }
+      if (idx < 0) { toast("Couldn’t find that track."); return; }
+      state.queue = list.slice();
+      state.qi = idx;
+      state.hist = [];
+      load(true);
+      startRec();
+    } else if (t.blob) {
+      var url = URL.createObjectURL(t.blob);
+      var a = document.createElement("a");
+      a.href = url;
+      var ext = (t.fileName && t.fileName.match(/\.[^.]+$/)) ? t.fileName.match(/\.[^.]+$/)[0] : ".mp3";
+      var name = ((t.artist ? t.artist + " - " : "") + t.title).replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "track";
+      a.download = name + ext;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+      toast("Downloading “" + t.title + "”.");
+    } else {
+      toast("No file available to download for this track.");
+    }
+  }
 
   $("#nav").addEventListener("click", function (e) {
     var n = e.target.closest("[data-nav]");
@@ -1304,6 +1356,9 @@ a.length>D&&(D=a.length,p=0|1.25*D+7200,r=new Int8Array(p));a=u.lame_encode_buff
     else if (act === "deltrack") {
       var t = byId(id);
       confirmBox("Delete “" + t.title + "”?", "This removes the track from your library and any playlists. The original file on your device isn’t touched.", "Delete track", function () { removeTrack(id); toast("Track deleted."); });
+    }
+    else if (act === "download") {
+      downloadTrack(id);
     }
   });
 
@@ -1474,6 +1529,30 @@ a.length>D&&(D=a.length,p=0|1.25*D+7200,r=new Int8Array(p));a=u.lame_encode_buff
       var dl = $("#recDl"); dl.href = recUrl; dl.setAttribute("download", name + " (recording).mp3");
       $("#recAudio").src = recUrl;
       $("#recMeta").textContent = name + " · " + fmt(secs) + " · " + (blob.size / 1048576).toFixed(1) + " MB";
+
+      // Automatically add the recorded MP3 as a permanent local track in the library
+      var localTrack = {
+        id: uid(),
+        kind: "file",
+        fileName: name + ".mp3",
+        title: r.track.title || name,
+        artist: r.track.artist || "",
+        size: blob.size,
+        type: "audio/mpeg",
+        duration: secs,
+        added: Date.now(),
+        blob: blob
+      };
+      tracks.push(localTrack);
+      idbPut("tracks", localTrack);
+      var pl = state.view !== "library" ? curPl() : null;
+      if (pl && pl.trackIds.indexOf(localTrack.id) < 0) {
+        pl.trackIds.push(localTrack.id);
+        savePl(pl);
+      }
+      render();
+      toast("“" + localTrack.title + "” saved as MP3 in your library.");
+
       openDialog("#dlgRec");
     } catch (e) { toast("Couldn’t create the MP3. Please try recording again."); }
   }
